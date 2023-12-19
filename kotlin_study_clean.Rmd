@@ -1,0 +1,799 @@
+---
+title: "kotlin_study_clean"
+author: "Riccardo Coppola"
+date: "22/7/2023"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(dplyr)    # alternatively, this also loads %>%
+library(ggplot2)
+library(lmPerm)
+library(tidyr)
+library(naniar)
+
+```
+
+## R Markdown
+
+\section{Context Definition}
+
+```{r context_definition}
+summary(cars)
+
+
+
+data <- read.csv("000_starting_data_for_context.csv", header = TRUE, sep = ",")
+
+
+#number of total projects
+
+data <- subset( data, select = -useless )
+
+data$fdroid_lastupdate <- as.Date(data$fdroid_lastupdate,format("%Y-%m-%d"))
+data$github_lastupdate <- as.Date(data$github_lastupdate,format("%Y-%m-%d"))
+data$playstore_lastupdate <- as.Date(data$playstore_lastupdate,format("%Y-%m-%d"))
+
+n_total_projects = nrow(data)
+
+#subdivision in groups
+
+total_projects = nrow(data)
+also_on_play_store = nrow(filter(data, playstore_url != "null"))
+also_on_github = nrow(filter(data, !is.na(github_lastupdate)))
+on_all_three = nrow(filter(data, !is.na(github_lastupdate) & playstore_url != "null"))
+data$most_recent_update <- pmax(data$fdroid_lastupdate, data$github_lastupdate, data$playstore_lastupdate, na.rm = TRUE)
+data$most_recent_update_os <- pmax(data$fdroid_lastupdate, data$github_lastupdate, na.rm=TRUE)
+data$most_recent_source <- ifelse(data$fdroid_lastupdate >= data$github_lastupdate, "fdroid", "github")
+data$most_recent_source <- ifelse(is.na(data$most_recent_source), "fdroid", data$most_recent_source)
+data$most_recent_store <- ifelse(data$most_recent_update == data$fdroid_lastupdate, "fdroid", 
+                                 ifelse(data$most_recent_update == data$github_lastupdate, "github",
+                                        "playstore"))
+data$group <- ifelse((!is.na(data$github_lastupdate) & data$playstore_url != "null"), "fgp", ifelse(!is.na(data$github_lastupdate), "fg", ifelse(data$playstore_url != "null", "fp", "f")))
+
+all_projects_f = nrow(data %>% filter(group == "f"))
+all_projects_fg = nrow(data %>% filter(group == "fg"))
+all_projects_fp = nrow(data %>% filter(group == "fp"))
+all_projects_fgp = nrow(data %>% filter(group == "fgp"))
+
+#filtering non-updated after oct 2017
+
+updated_after_oct_2017 = (filter(data, most_recent_update > as.Date("2017-10-01", format("%Y-%m-%d"))))
+data$updated_after_oct_2017 <- ifelse(data$most_recent_update > as.Date("2017-10-01", format("%Y-%m-%d")), TRUE, FALSE)
+
+
+projects_after_oct_2017_f = nrow(updated_after_oct_2017 %>% filter(group == "f"))
+projects_after_oct_2017_fg = nrow(updated_after_oct_2017 %>% filter(group == "fg"))
+projects_after_oct_2017_fp = nrow(updated_after_oct_2017 %>% filter(group == "fp"))
+projects_after_oct_2017_fgp = nrow(updated_after_oct_2017 %>% filter(group == "fgp"))
+
+#abandonment rate
+
+data$abandoned_fdroid <- ifelse(data$fdroid_lastupdate < data$most_recent_update -45, TRUE, FALSE)
+data$abandoned_github <- ifelse(data$github_lastupdate < data$most_recent_update -45, TRUE, FALSE)
+data$abandoned_playstore <- ifelse(data$playstore_lastupdate < data$most_recent_update -45, TRUE, FALSE)
+
+fp_abandoned_fdroid = nrow(filter(data, group == "fp" & abandoned_fdroid==TRUE))
+fp_abandoned_playstore = nrow(filter(data, group =="fp", abandoned_playstore==TRUE))
+
+fg_abandoned_fdroid = nrow(filter(data, group == "fg" & abandoned_fdroid==TRUE))
+fg_abandoned_github = nrow(filter(data, group == "fg" & abandoned_github==TRUE))
+
+fgp_abandoned_fdroid = nrow(filter(data, group == "fgp" & abandoned_fdroid==TRUE))
+fgp_abandoned_github = nrow(filter(data, group == "fgp" & abandoned_github==TRUE))
+fgp_abandoned_playstore = nrow(filter(data, group == "fgp" & abandoned_playstore==TRUE))
+
+write.csv(updated_after_oct_2017, "001_data_updated_after_oct_2017.csv", row.names=FALSE, sep=",", quote=FALSE)
+
+
+
+```
+
+
+```{r RQ1}
+
+
+#here we get the info for RQ1 results, collected externally with the cloc tool and merged in another csv file
+#fix the numbers at this point!
+
+
+data_rq1 <- read.csv("rq1_results_merged.csv", header = TRUE, sep = ",")
+
+
+nrow(filter(data_rq1, most_recent_update > as.Date("2017-10-01", format("%Y-%m-%d"))))
+
+
+projects_after_oct_2017_f = nrow(data_rq1 %>% filter(group == "f"))
+projects_after_oct_2017_fg = nrow(data_rq1 %>% filter(group == "fg"))
+projects_after_oct_2017_fp = nrow(data_rq1 %>% filter(group == "fp"))
+projects_after_oct_2017_fgp = nrow(data_rq1 %>% filter(group == "fgp"))
+
+fp_abandoned_fdroid = nrow(filter(data_rq1, group == "fp" & abandoned_fdroid==TRUE))
+fp_abandoned_playstore = nrow(filter(data_rq1, group =="fp", abandoned_playstore==TRUE))
+
+fg_abandoned_fdroid = nrow(filter(data_rq1, group == "fg" & abandoned_fdroid==TRUE))
+fg_abandoned_github = nrow(filter(data_rq1, group == "fg" & abandoned_github==TRUE))
+
+fgp_abandoned_fdroid = nrow(filter(data_rq1, group == "fgp" & abandoned_fdroid==TRUE))
+fgp_abandoned_github = nrow(filter(data_rq1, group == "fgp" & abandoned_github==TRUE))
+fgp_abandoned_playstore = nrow(filter(data_rq1, group == "fgp" & abandoned_playstore==TRUE))
+
+
+#filter hybrid ones
+
+non_hybrid_after_oct_2017 = data_rq1 %>% filter(kotlin_code>20 | java_code>20)
+total_number_non_hybrid = nrow(data_rq1 %>% filter(kotlin_code>20 | java_code>20))
+non_hybrid_projects_after_oct_2017_f = nrow(non_hybrid_after_oct_2017 %>% filter(group == "f"))
+non_hybrid_projects_after_oct_2017_fg = nrow(non_hybrid_after_oct_2017 %>% filter(group == "fg"))
+non_hybrid_projects_after_oct_2017_fp = nrow(non_hybrid_after_oct_2017 %>% filter(group == "fp"))
+non_hybrid_projects_after_oct_2017_fgp = nrow(non_hybrid_after_oct_2017 %>% filter(group == "fgp"))
+
+
+write.csv(non_hybrid_after_oct_2017, "002_data_used_for_rq1.csv", row.names=FALSE, sep=",", quote=FALSE)
+
+fp_abandoned_fdroid = nrow(filter(non_hybrid_after_oct_2017, group == "fp" & abandoned_fdroid==TRUE))
+fp_abandoned_playstore = nrow(filter(non_hybrid_after_oct_2017, group =="fp", abandoned_playstore==TRUE))
+
+fg_abandoned_fdroid = nrow(filter(non_hybrid_after_oct_2017, group == "fg" & abandoned_fdroid==TRUE))
+fg_abandoned_github = nrow(filter(non_hybrid_after_oct_2017, group == "fg" & abandoned_github==TRUE))
+
+fgp_abandoned_fdroid = nrow(filter(non_hybrid_after_oct_2017, group == "fgp" & abandoned_fdroid==TRUE))
+fgp_abandoned_github = nrow(filter(non_hybrid_after_oct_2017, group == "fgp" & abandoned_github==TRUE))
+fgp_abandoned_playstore = nrow(filter(non_hybrid_after_oct_2017, group == "fgp" & abandoned_playstore==TRUE))
+
+
+
+#once we have this set, we can compute the results for RQ1
+#table 3 in WIP: percentage of projects with kotlin, percentage of projects with kotlin minority, percentage of projects with kotlin majority, percentage of projects with only kotlin (restructure table)
+#avg. kotlin locs among all projects, avg. kotlin files among all projects and groups
+#figure 1 in WIP: same results as table 3, plotted
+
+
+#all projects
+
+total_number = nrow(non_hybrid_after_oct_2017)
+with_java = nrow(non_hybrid_after_oct_2017 %>% filter(java_code>20))
+with_kotlin = nrow(non_hybrid_after_oct_2017 %>% filter(kotlin_code>20))
+only_java = nrow(non_hybrid_after_oct_2017 %>% filter(java_code> 20 & kotlin_code <=20))
+only_kotlin = nrow(non_hybrid_after_oct_2017 %>% filter(java_code <= 20 & kotlin_code > 20))
+both_java_and_kotlin = nrow(non_hybrid_after_oct_2017 %>% filter(java_code > 20 & kotlin_code > 20))
+kotlin_majority = nrow(non_hybrid_after_oct_2017 %>% filter(kotlin_code > 20 & kotlin_code > java_code)) - only_kotlin
+kotlin_minority = with_kotlin - kotlin_majority - only_kotlin
+
+
+avg_kotlin_code_relative = mean(non_hybrid_after_oct_2017$kotlin_relative_locs)
+avg_kotlin_files_relative = mean(non_hybrid_after_oct_2017$kotlin_relative_files)
+
+
+avg_kotlin_code_relative_in_projects_with_kotlin = mean((non_hybrid_after_oct_2017 %>% filter(kotlin_code>20))$kotlin_relative_locs)
+avg_kotlin_files_relative_in_projects_with_kotlin = mean((non_hybrid_after_oct_2017 %>% filter(kotlin_code>20))$kotlin_relative_files)
+
+
+#groups f fp fg fpg
+
+
+f_data_rq1 <- non_hybrid_after_oct_2017 %>% filter(group == "f")
+f_total_number = nrow(f_data_rq1)
+f_total_number_non_hybrid = nrow(f_data_rq1 %>% filter(kotlin_code>20 | java_code>20))
+f_total_number_hybrid = f_total_number - f_total_number_non_hybrid
+f_with_java = nrow(f_data_rq1 %>% filter(java_code>20))
+f_with_kotlin = nrow(f_data_rq1 %>% filter(kotlin_code>20))
+f_only_java = nrow(f_data_rq1 %>% filter(java_code> 20 & kotlin_code <=20))
+f_only_kotlin = nrow(f_data_rq1 %>% filter(java_code <= 20 & kotlin_code > 20))
+f_both_java_and_kotlin = nrow(f_data_rq1 %>% filter(java_code > 20 & kotlin_code > 20))
+f_kotlin_majority = nrow(f_data_rq1 %>% filter(kotlin_code > 20 & kotlin_code > java_code)) - f_only_kotlin
+f_kotlin_minority = f_with_kotlin - f_kotlin_majority - f_only_kotlin
+
+f_avg_kotlin_code_in_projects_with_kotlin = mean((f_data_rq1 %>% filter(kotlin_code>20 ))$kotlin_relative_locs)
+f_avg_kotlin_files_in_projects_with_kotlin = mean((f_data_rq1 %>% filter(kotlin_code>20 ))$kotlin_relative_files)
+f_avg_kotlin_code = mean(f_data_rq1$kotlin_relative_locs)
+f_avg_kotlin_files = mean(f_data_rq1$kotlin_relative_files)
+
+
+fp_data_rq1 <- non_hybrid_after_oct_2017 %>% filter(group == "fp")
+fp_total_number = nrow(fp_data_rq1)
+fp_with_java = nrow(fp_data_rq1 %>% filter(java_code>20))
+fp_with_kotlin = nrow(fp_data_rq1 %>% filter(kotlin_code>20))
+fp_only_java = nrow(fp_data_rq1 %>% filter(java_code> 20 & kotlin_code <=20))
+fp_only_kotlin = nrow(fp_data_rq1 %>% filter(java_code <= 20 & kotlin_code > 20))
+fp_both_java_and_kotlin = nrow(fp_data_rq1 %>% filter(java_code > 20 & kotlin_code > 20))
+fp_kotlin_majority = nrow(fp_data_rq1 %>% filter(kotlin_code > 20 & kotlin_code > java_code)) - fp_only_kotlin
+fp_kotlin_minority = fp_with_kotlin - fp_kotlin_majority - fp_only_kotlin
+fp_avg_kotlin_code_in_projects_with_kotlin = mean((fp_data_rq1 %>% filter(kotlin_code>20 ))$kotlin_relative_locs)
+fp_avg_kotlin_files_in_projects_with_kotlin = mean((fp_data_rq1 %>% filter(kotlin_code>20))$kotlin_relative_files)
+fp_avg_kotlin_code = mean(fp_data_rq1$kotlin_relative_locs)
+fp_avg_kotlin_files = mean(fp_data_rq1$kotlin_relative_files)
+
+
+fg_data_rq1 <- non_hybrid_after_oct_2017 %>% filter(group == "fg")
+fg_total_number = nrow(fg_data_rq1)
+fg_total_number_non_hybrid = nrow(fg_data_rq1 %>% filter(kotlin_code>20 | java_code>20))
+fg_total_number_hybrid = fg_total_number - fg_total_number_non_hybrid
+fg_with_java = nrow(fg_data_rq1 %>% filter(java_code>20))
+fg_with_kotlin = nrow(fg_data_rq1 %>% filter(kotlin_code>20))
+fg_only_java = nrow(fg_data_rq1 %>% filter(java_code> 20 & kotlin_code <=20))
+fg_only_kotlin = nrow(fg_data_rq1 %>% filter(java_code <= 20 & kotlin_code > 20))
+fg_both_java_and_kotlin = nrow(fg_data_rq1 %>% filter(java_code > 20 & kotlin_code > 20))
+fg_kotlin_majority = nrow(fg_data_rq1 %>% filter(kotlin_code > 20 & kotlin_code > java_code)) - fg_only_kotlin
+fg_kotlin_minority = fg_with_kotlin - fg_only_kotlin - fg_kotlin_majority
+fg_avg_kotlin_code = mean(fg_data_rq1$kotlin_relative_locs)
+fg_avg_kotlin_files = mean(fg_data_rq1$kotlin_relative_files)
+fg_avg_kotlin_code_in_projects_with_kotlin = mean((fg_data_rq1 %>% filter(kotlin_code>20 ))$kotlin_relative_locs)
+fg_avg_kotlin_files_in_projects_with_kotlin = mean((fg_data_rq1 %>% filter(kotlin_code>20))$kotlin_relative_files)
+
+
+
+fpg_data_rq1 <- non_hybrid_after_oct_2017 %>% filter(group == "fgp")
+fpg_total_number = nrow(fpg_data_rq1)
+fpg_total_number_non_hybrid = nrow(fpg_data_rq1 %>% filter(kotlin_code>20 | java_code>20))
+fpg_total_number_hybrid = fpg_total_number - fpg_total_number_non_hybrid
+fpg_with_java = nrow(fpg_data_rq1 %>% filter(java_code>20))
+fpg_with_kotlin = nrow(fpg_data_rq1 %>% filter(kotlin_code>20))
+fpg_only_java = nrow(fpg_data_rq1 %>% filter(java_code> 20 & kotlin_code <=20))
+fpg_only_kotlin = nrow(fpg_data_rq1 %>% filter(java_code <= 20 & kotlin_code > 20))
+fpg_both_java_and_kotlin = nrow(fpg_data_rq1 %>% filter(java_code > 20 & kotlin_code > 20))
+fpg_kotlin_majority = nrow(fpg_data_rq1 %>% filter(kotlin_code > 20 & kotlin_code > java_code)) - fpg_only_kotlin
+fpg_kotlin_minority = fpg_with_kotlin - fpg_only_kotlin - fpg_kotlin_majority
+fpg_avg_kotlin_code = mean(fpg_data_rq1$kotlin_relative_locs)
+fpg_avg_kotlin_files = mean(fpg_data_rq1$kotlin_relative_files)
+fpg_avg_kotlin_code_in_projects_with_kotlin = mean((fpg_data_rq1 %>% filter(kotlin_code>20))$kotlin_relative_locs)
+fpg_avg_kotlin_files_in_projects_with_kotlin = mean((fpg_data_rq1 %>% filter(kotlin_code>20 ))$kotlin_relative_files)
+
+#group last f last g
+
+source_from_github_data_rq1 <- non_hybrid_after_oct_2017 %>% filter(most_recent_source == "github")
+github_total_number = nrow(source_from_github_data_rq1)
+github_with_java = nrow(source_from_github_data_rq1 %>% filter(java_code>20))
+github_with_kotlin = nrow(source_from_github_data_rq1 %>% filter(kotlin_code>20))
+github_only_java = nrow(source_from_github_data_rq1 %>% filter(java_code> 20 & kotlin_code <=20))
+github_only_kotlin = nrow(source_from_github_data_rq1 %>% filter(java_code <= 20 & kotlin_code > 20))
+github_both_java_and_kotlin = nrow(source_from_github_data_rq1 %>% filter(java_code > 20 & kotlin_code > 20))
+github_kotlin_majority = nrow(source_from_github_data_rq1 %>% filter(kotlin_code > 20 & kotlin_code > java_code)) - github_only_kotlin
+github_kotlin_minority = github_with_kotlin - github_kotlin_majority - github_only_kotlin
+github_avg_kotlin_code = mean(source_from_github_data_rq1$kotlin_relative_locs)
+github_avg_kotlin_files = mean(source_from_github_data_rq1$kotlin_relative_files)
+github_avg_kotlin_code_in_projects_with_kotlin = mean((source_from_github_data_rq1 %>% filter(kotlin_code>20))$kotlin_relative_locs)
+github_avg_kotlin_files_in_projects_with_kotlin = mean((source_from_github_data_rq1 %>% filter(kotlin_code>20))$kotlin_relative_files)
+
+
+
+source_from_fdroid_data_rq1 <- non_hybrid_after_oct_2017 %>% filter(most_recent_source == "fdroid")
+fdroid_total_number = nrow(source_from_fdroid_data_rq1)
+fdroid_with_java = nrow(source_from_fdroid_data_rq1 %>% filter(java_code>20))
+fdroid_with_kotlin = nrow(source_from_fdroid_data_rq1 %>% filter(kotlin_code>20))
+fdroid_only_java = nrow(source_from_fdroid_data_rq1 %>% filter(java_code> 20 & kotlin_code <=20))
+fdroid_only_kotlin = nrow(source_from_fdroid_data_rq1 %>% filter(java_code <= 20 & kotlin_code > 20))
+fdroid_both_java_and_kotlin = nrow(source_from_fdroid_data_rq1 %>% filter(java_code > 20 & kotlin_code > 20))
+fdroid_kotlin_majority = nrow(source_from_fdroid_data_rq1 %>% filter(kotlin_code > 20 & kotlin_code > java_code)) - fdroid_only_kotlin
+fdroid_kotlin_minority = fdroid_with_kotlin - fdroid_kotlin_majority - fdroid_only_kotlin
+fdroid_avg_kotlin_code = mean(source_from_fdroid_data_rq1$kotlin_relative_locs)
+fdroid_avg_kotlin_files = mean(source_from_fdroid_data_rq1$kotlin_relative_files)
+fdroid_avg_kotlin_code_in_projects_with_kotlin = mean((source_from_fdroid_data_rq1 %>% filter(kotlin_code>20))$kotlin_relative_locs)
+fdroid_avg_kotlin_files_in_projects_with_kotlin = mean((source_from_fdroid_data_rq1 %>% filter(kotlin_code>20))$kotlin_relative_files)
+
+
+
+
+
+#table 4 in WIP: respective to the last update
+#figure 2 in WIP: same results as table 4, plotted
+
+
+  
+kotlin_amount_stores <- data.frame(
+  store = rep(c("F-Droid", "GitHub"), each = 4),
+  amount = rep(c("No Kotlin", "Kotlin < 50%", "Kotlin > 50%", "Only Kotlin"), 2),
+  value = c(1070, 185, 140, 356, 615, 67, 80, 195)
+)
+
+
+kotlin_amount_groups <- data.frame(
+  store = rep(c("F", "FP", "FG", "FPG"), each = 4),
+  amount = rep(c("No Kotlin", "Kotlin < 50%", "Kotlin > 50%", "Only Kotlin"), 4),
+  value = c(376, 50, 32, 108, 300, 78, 59, 127, 567, 44, 42, 120, 442, 80, 87, 196)
+)
+
+  my_colors <- c("#d0e5e3", "#97babd", "#718094", "#555567")
+  
+  
+  
+  p <- ggplot(kotlin_amount_stores, aes(x = store, y = value))+
+  geom_col(aes(fill = factor(amount, levels = c("Hybrid", "No Kotlin", "Kotlin < 50%", "Kotlin > 50%", "Only Kotlin")))) + xlab("Most recently updated source") + ylab("Number of apps") + scale_x_discrete(limits=c("F-Droid", "GitHub"))+ scale_fill_manual(values = my_colors, name = "Presence of Kotlin") 
+
+p
+
+
+  p <- ggplot(kotlin_amount_groups, aes(x = store, y = value))+
+  geom_col(aes(fill = factor(amount, levels = c("Hybrid", "No Kotlin", "Kotlin < 50%", "Kotlin > 50%", "Only Kotlin")))) + xlab("Group of applications") + ylab("Number of apps") + scale_x_discrete(limits=c("F", "FP", "FG", "FPG"))+ scale_fill_manual(values = my_colors, name = "Presence of Kotlin") 
+
+p
+
+
+
+```
+
+
+```{r RQ2}
+
+
+data_rq2_stackedarea <- read.csv("rq2_results_per_month.csv", header = TRUE, sep = ",")
+
+data_rq2_stackedarea_correction <- read.csv("rq2_results_per_month_java_corrections.csv", header = TRUE, sep = ",")
+
+
+library(data.table)
+
+
+
+long_rq2_stackedarea <- melt(setDT(data_rq2_stackedarea), id.vars = c("month_after"), variable.name = "project_type")
+long_rq2_stackedarea <- long_rq2_stackedarea %>% filter(project_type != "n_active_projects")
+
+
+  long_rq2_2 <- union(long_rq2_stackedarea, data_rq2_stackedarea_correction)
+
+#num_to_stop <- 3
+#long_rq2_stackedarea$month_after <- substr(long_rq2_stackedarea$month_after, 1, nchar(long_rq2_stackedarea$month_after) - num_to_stop)
+
+  my_colors <- c(	"#d0e5e3", "#97babd", "#718094", "#555567")
+
+
+
+ long_rq2_stackedarea  <- long_rq2_stackedarea %>%mutate(month_after = as.Date(month_after, format = "%Y-%m-%d")) 
+    
+    
+  ggplot(long_rq2_stackedarea,aes(x=month_after, y=value, fill =project_type)) + geom_area(aes(fill=factor(project_type, levels = c("n_projects_no_kotlin", "n_projects_majority_kotlin", "n_projects_minority_kotlin", "n_projects_only_kotlin"))),position="stack", stat="identity") + theme(axis.text.x = element_text(size=8, angle = 90, vjust = 0.5, hjust=1)) + xlab("Month") + ylab("Number of projects") + scale_fill_manual(values = my_colors, name = "Presence of Kotlin", labels=c("n_projects_no_kotlin" = "No Kotlin", "n_projects_minority_kotlin"="Kotlin < 50%", "n_projects_majority_kotlin"="Kotlin > 50%", "n_projects_only_kotlin"="Only Kotlin")) + scale_x_continuous(breaks=c(as.Date("2017-11-01"), as.Date("2018-11-01"), as.Date("2019-11-01"), as.Date("2020-11-01"),as.Date("2021-11-01"),as.Date("2022-11-01"),as.Date("2023-05-01")))
+  
+ long_rq2_2  <- long_rq2_2 %>%mutate(month_after = as.Date(month_after, format = "%Y-%m-%d")) 
+
+ long_rq2_2 <- long_rq2_2 %>% group_by(month_after, project_type) %>% summarise(value=sum(value), .groups='drop')
+  
+  ggplot(long_rq2_2,aes(x=month_after, y=value, fill =project_type)) + geom_area(aes(fill=factor(project_type, levels = c("n_projects_no_kotlin", "n_projects_minority_kotlin", "n_projects_majority_kotlin", "n_projects_only_kotlin"))),position="stack", stat="identity") + theme(axis.text.x = element_text(size=8, angle = 90, vjust = 0.5, hjust=1)) + xlab("Month") + ylab("Number of projects") + scale_fill_manual(values = my_colors, name = "Presence of Kotlin", labels=c("n_projects_no_kotlin" = "No Kotlin", "n_projects_minority_kotlin"="Kotlin < 50%", "n_projects_majority_kotlin"="Kotlin > 50%", "n_projects_only_kotlin"="Only Kotlin")) + scale_x_continuous(breaks=c(as.Date("2017-11-01"), as.Date("2018-11-01"), as.Date("2019-11-01"), as.Date("2020-11-01"),as.Date("2021-11-01"),as.Date("2022-11-01"),as.Date("2023-05-01")))
+  
+  
+  
+  #repeat for 1 year 
+  
+  
+  data_rq2_stackedarea_1year <- read.csv("rq2_results_per_month_1_years.csv", header = TRUE, sep = ",")
+
+data_rq2_stackedarea_correction_1year <- read.csv("rq2_results_per_month_java_corrections_1_years.csv", header = TRUE, sep = ",")
+
+
+library(data.table)
+
+long_rq2_stackedarea_1_year <- melt(setDT(data_rq2_stackedarea_1year), id.vars = c("month_after"), variable.name = "project_type")
+long_rq2_stackedarea_1_year <- long_rq2_stackedarea_1_year %>% filter(project_type != "n_active_projects")
+
+
+  long_rq2_2_1year <- union(long_rq2_stackedarea_1_year, data_rq2_stackedarea_correction_1year)
+
+#num_to_stop <- 3
+#long_rq2_stackedarea$month_after <- substr(long_rq2_stackedarea$month_after, 1, nchar(long_rq2_stackedarea$month_after) - num_to_stop)
+
+
+
+ long_rq2_stackedarea_1_year  <- long_rq2_stackedarea_1_year %>%mutate(month_after = as.Date(month_after, format = "%Y-%m-%d")) 
+    
+    
+ long_rq2_2_1year  <- long_rq2_2_1year %>%mutate(month_after = as.Date(month_after, format = "%Y-%m-%d")) 
+
+ long_rq2_2_1year <- long_rq2_2_1year %>% group_by(month_after, project_type) %>% summarise(value=sum(value), .groups='drop')
+  
+  ggplot(long_rq2_2_1year,aes(x=month_after, y=value, fill =project_type)) + geom_area(aes(fill=factor(project_type, levels = c("n_projects_no_kotlin", "n_projects_minority_kotlin", "n_projects_majority_kotlin", "n_projects_only_kotlin"))),position="stack", stat="identity") + theme(axis.text.x = element_text(size=8, angle = 90, vjust = 0.5, hjust=1)) + xlab("Month") + ylab("Number of projects") + scale_fill_manual(values = my_colors, name = "Presence of Kotlin", labels=c("n_projects_no_kotlin" = "No Kotlin", "n_projects_minority_kotlin"="Kotlin < 50%", "n_projects_majority_kotlin"="Kotlin > 50%", "n_projects_only_kotlin"="Only Kotlin")) + scale_x_continuous(breaks=c(as.Date("2017-11-01"), as.Date("2018-11-01"), as.Date("2019-11-01"), as.Date("2020-11-01"),as.Date("2021-11-01"),as.Date("2022-11-01"),as.Date("2023-05-01")))
+
+
+
+```
+
+
+
+```{r RQ3cleanup}
+
+nrow(data_rq1)
+
+rq3_data_playstore <- data_rq1 %>% filter((group=="fp" | group=="fgp") & !abandoned_playstore)
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(kotlin_relative_locs = replace_na(kotlin_relative_locs, 0))
+
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(only_java=ifelse(kotlin_relative_locs==0.0, TRUE, FALSE))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(kotlin_minority=ifelse(kotlin_relative_locs>0.0 & kotlin_relative_locs<=0.5, TRUE, FALSE))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(kotlin_majority=ifelse(kotlin_relative_locs>0.5 & kotlin_relative_locs<1.0, TRUE, FALSE))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(only_kotlin=ifelse(kotlin_relative_locs>0.5 & kotlin_relative_locs<1.0, TRUE, FALSE))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(kotlin_group=ifelse(only_java == TRUE, "No Kotlin", ifelse(kotlin_minority==TRUE, "Kotlin Minority", ifelse(kotlin_majority==TRUE, "Kotlin Majority", "Only Kotlin"))))
+
+
+
+rq3_data_github <- data_rq1 %>% filter((group=="fg" | group=="fgp") & !abandoned_github)
+
+
+rq3_data_github <- rq3_data_github %>% mutate(kotlin_relative_locs = replace_na(kotlin_relative_locs, 0))
+
+
+rq3_data_github <- rq3_data_github %>% mutate(kotlin_relative_locs = replace_na(kotlin_relative_locs, 0))
+
+
+rq3_data_github <- rq3_data_github %>% mutate(only_java=ifelse(kotlin_relative_locs==0.0, TRUE, FALSE))
+
+rq3_data_github <- rq3_data_github %>% mutate(kotlin_minority=ifelse(kotlin_relative_locs>0.0 & kotlin_relative_locs<=0.5, TRUE, FALSE))
+
+rq3_data_github <- rq3_data_github %>% mutate(kotlin_majority=ifelse(kotlin_relative_locs>0.5 & kotlin_relative_locs<1.0, TRUE, FALSE))
+
+rq3_data_github <- rq3_data_github %>% mutate(only_kotlin=ifelse(kotlin_relative_locs>0.5 & kotlin_relative_locs<1.0, TRUE, FALSE))
+
+rq3_data_github <- rq3_data_github %>% mutate(kotlin_group=ifelse(only_java == TRUE, "No Kotlin", ifelse(kotlin_minority==TRUE, "Kotlin Minority", ifelse(kotlin_majority==TRUE, "Kotlin Majority", "Only Kotlin"))))
+
+
+
+
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "1000+", 1000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "100+", 100, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "500+", 500, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "10+", 10, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "50.000+", 50000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "100000+", 100000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "10000+", 10000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "500000+", 500000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "50 Mln+", 50000000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "5 Mln+", 5000000, playstore_downloads))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "10 Mln+", 10000000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "100 Mln+", 100000000, playstore_downloads))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "10.000+", 10.000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "100.000+", 100.000, playstore_downloads))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "1 Mln+", 1000000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "10+", 10, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "1+", 1, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "50000+", 50000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "5000+", 5000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "50+", 50, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "5+", 5, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "0+", 0, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "1 Mrd+", 1000000000, playstore_downloads))
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads == "10 Mrd+", 10000000000, playstore_downloads))
+
+
+rq3_data_playstore$playstore_downloads <- as.numeric(rq3_data_playstore$playstore_downloads)
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = log10(playstore_downloads))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(playstore_downloads = ifelse(playstore_downloads==-Inf, 0, playstore_downloads))
+
+
+rq3_data_github <- rq3_data_github %>% mutate(github_stars = log10(github_stars))
+
+rq3_data_playstore <- rq3_data_playstore %>% mutate(kotlin_group = factor(kotlin_group, levels=c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")))
+
+rq3_data_github <- rq3_data_github %>% mutate(kotlin_group = factor(kotlin_group, levels=c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")))
+
+
+
+
+```
+
+```{r RQ3graphs, fig.height=4, fig.width=4}
+
+
+q1_playstorestars = unname(quantile(rq3_data_playstore$playstore_stars[], 0.25, na.rm = TRUE))
+q3_playstorestars = unname(quantile(rq3_data_playstore$playstore_stars[], 0.75, na.rm = TRUE))
+lowerbound_playstorestars = q1_playstorestars - 1.5*(q3_playstorestars - q1_playstorestars)
+upperbound_playstorestars = q1_playstorestars + 1.5*(q3_playstorestars - q1_playstorestars)
+
+q1_playstoredown = unname(quantile(rq3_data_playstore$playstore_downloads[], 0.25, na.rm = TRUE))
+q3_playstoredown = unname(quantile(rq3_data_playstore$playstore_downloads[], 0.75, na.rm = TRUE))
+lowerbound_playstoredown = q1_playstoredown -1.5*(q3_playstoredown - q1_playstoredown)
+upperbound_playstoredown =q1_playstoredown +1.5*(q3_playstoredown - q1_playstoredown)
+
+q1_githubwatching = unname(quantile(rq3_data_playstore$github_watching[], 0.25, na.rm = TRUE))
+q3_githubwatching = unname(quantile(rq3_data_playstore$github_watching[], 0.75, na.rm = TRUE))
+lowerbound_githubwatching = q1_githubwatching -1.5*(q3_githubwatching - q1_githubwatching)
+upperbound_githubwatching = q1_githubwatching +1.5*(q3_githubwatching - q1_githubwatching)
+
+q1_githubstars = unname(quantile(rq3_data_playstore$github_stars[], 0.25, na.rm = TRUE))
+q3_githubstars = unname(quantile(rq3_data_playstore$github_stars[], 0.75, na.rm = TRUE))
+lowerbound_githubstars = q1_githubstars -1.5*(q3_githubstars - q1_githubstars)
+upperbound_githubstars = q1_githubstars +1.5*(q3_githubstars -q1_githubstars)
+
+
+ggplot(rq3_data_playstore %>% filter(playstore_stars >= lowerbound_playstorestars & playstore_stars <= upperbound_playstorestars), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = playstore_stars, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) +  coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Playstore Stars") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") 
+
+
+
+ggplot(rq3_data_playstore %>% filter(playstore_downloads >= lowerbound_playstoredown & playstore_downloads <=upperbound_playstoredown), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = playstore_downloads, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) + coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Playstore Downloads (log10)") +
+  theme_minimal()  + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") + theme(        axis.text.y=element_blank()        )
+
+
+
+ggplot(rq3_data_github %>% filter(github_stars >= lowerbound_githubstars & github_stars <= upperbound_githubstars), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = github_stars, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) + coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Github Stars (log10)") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none")  +  theme(legend.position="none") + theme(        axis.text.y=element_blank()        )
+
+ggplot(rq3_data_github %>% filter(github_watching >= lowerbound_githubwatching & github_watching <= upperbound_githubwatching), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = github_watching, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) + coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Github Watching") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none")  +  theme(legend.position="none") + theme(        axis.text.y=element_blank()        )
+
+
+```
+
+```{r RQ3stat, fig.height=4, fig.width=4}
+
+
+
+playstore_stars_res <- rq3_data_playstore %>% filter(playstore_stars >= lowerbound_playstorestars & playstore_stars <= upperbound_playstorestars) %>% group_by(kotlin_group) %>% summarize(
+    median_playstorestars = median(playstore_stars, na.rm = TRUE),
+  average_playstorestars = mean(playstore_stars, na.rm = TRUE),
+  sd_playstorestars = sd(playstore_stars, na.rm = TRUE)
+)
+
+head(playstore_stars_res)
+
+
+playstore_down_res <- rq3_data_playstore %>% filter(playstore_downloads >= lowerbound_playstoredown & playstore_downloads <= upperbound_playstoredown) %>% group_by(kotlin_group) %>% summarize(
+    median_playstoredownloads = median(playstore_downloads, na.rm = TRUE),
+  average_playstoredownloads = mean(playstore_downloads, na.rm = TRUE),
+  sd_playstoredownloads = sd(playstore_downloads, na.rm = TRUE)
+)
+
+
+head(playstore_down_res)
+
+github_watching_res <- rq3_data_github %>% filter(github_watching >= lowerbound_githubwatching & github_watching <= upperbound_githubwatching) %>% group_by(kotlin_group) %>% summarize(
+    median_githubwatching = median(github_watching, na.rm = TRUE),
+  average_githubwatching = mean(github_watching, na.rm = TRUE),
+  sd_githubwatching = sd(github_watching, na.rm = TRUE)
+)
+
+
+head(github_watching_res)
+
+github_stars_res <- rq3_data_github %>% filter(github_stars >= lowerbound_githubstars & github_stars <= upperbound_githubstars) %>% group_by(kotlin_group) %>% summarize(
+    median_githubstars = median(github_stars, na.rm = TRUE),
+  average_githubstars = mean(github_stars, na.rm = TRUE),
+  sd_githubstars = sd(github_stars, na.rm = TRUE)
+)
+
+
+head(github_stars_res)
+
+filtered_github_watching <- rq3_data_github %>% filter(github_watching >= lowerbound_githubwatching & github_watching <= upperbound_githubwatching)
+
+
+contr = list( kotlin_group="contr.treatment" ) 
+
+model = lm( playstore_stars ~ kotlin_group , data=rq3_data_playstore %>% filter(playstore_stars >= lowerbound_playstorestars & playstore_stars <= upperbound_playstorestars), contrasts = contr )  
+summary( model ) %>% coefficients
+
+model = lm( playstore_downloads ~ kotlin_group , data=rq3_data_playstore %>% filter(playstore_downloads >= lowerbound_playstoredown & playstore_downloads <= upperbound_playstoredown), contrasts = contr )  
+summary( model ) %>% coefficients
+
+model = lm( github_stars ~ kotlin_group , data=rq3_data_github %>% filter(github_stars >= lowerbound_githubstars & github_stars <= upperbound_githubstars) , contrasts = contr )  
+summary( model ) %>% coefficients
+
+model = lm( github_watching ~ kotlin_group , data=rq3_data_github %>% filter(github_watching >= lowerbound_githubwatching & github_watching <= upperbound_githubwatching), contrasts = contr )  
+summary( model ) %>% coefficients
+
+
+
+
+
+```
+
+
+
+
+
+```{r RQ4cleaning-graph, fig.height=4, fig.width=4}
+
+
+dataframe_rq4 <- read.csv("rq4_all_results_merged.csv", header = TRUE, sep = ",")
+
+
+dataframe_rq4 <- dataframe_rq4 %>% filter(wmc_avg >=0)
+
+dataframe_rq4 <- dataframe_rq4 %>% filter(wmc_avg > 0 & cyclomatic_avg > 0 & halstead_effort_avg > 0 & halstead_difficulty_avg > 0 & mi_average > 0 & cognitive_avg > 0)
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(halstead_effort_avg = log10(halstead_effort_avg))
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(kotlin_relative_locs = replace_na(kotlin_relative_locs, 0))
+
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(kotlin_relative_locs = replace_na(kotlin_relative_locs, 0))
+
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(only_java=ifelse(kotlin_relative_locs==0.0, TRUE, FALSE))
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(kotlin_minority=ifelse(kotlin_relative_locs>0.0 & kotlin_relative_locs<=0.5, TRUE, FALSE))
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(kotlin_majority=ifelse(kotlin_relative_locs>0.5 & kotlin_relative_locs<1.0, TRUE, FALSE))
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(only_kotlin=ifelse(kotlin_relative_locs>0.5 & kotlin_relative_locs<1.0, TRUE, FALSE))
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(kotlin_group=ifelse(only_java == TRUE, "No Kotlin", ifelse(kotlin_minority==TRUE, "Kotlin Minority", ifelse(kotlin_majority==TRUE, "Kotlin Majority", "Only Kotlin"))))
+
+dataframe_rq4 <- dataframe_rq4 %>% mutate(kotlin_group = factor(kotlin_group, levels=c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")))
+
+
+
+q1_wmc_avg = unname(quantile(dataframe_rq4$wmc_avg[], 0.25, na.rm = TRUE))
+q3_wmc_avg = unname(quantile(dataframe_rq4$wmc_avg[], 0.75, na.rm = TRUE))
+lowerbound_wmc_avg = q1_wmc_avg - 1.5*(q3_wmc_avg - q1_wmc_avg)
+upperbound_wmc_avg = q1_wmc_avg + 1.5*(q3_wmc_avg - q1_wmc_avg)
+
+q1_cyclomatic_avg = unname(quantile(dataframe_rq4$cyclomatic_avg[], 0.25, na.rm = TRUE))
+q3_cyclomatic_avg = unname(quantile(dataframe_rq4$cyclomatic_avg[], 0.75, na.rm = TRUE))
+lowerbound_cyclomatic_avg = q1_cyclomatic_avg - 1.5*(q3_cyclomatic_avg - q1_cyclomatic_avg)
+upperbound_cyclomatic_avg = q1_cyclomatic_avg + 1.5*(q3_cyclomatic_avg - q1_cyclomatic_avg)
+
+q1_halstead_effort_avg = unname(quantile(dataframe_rq4$halstead_effort_avg[], 0.25, na.rm = TRUE))
+q3_halstead_effort_avg = unname(quantile(dataframe_rq4$halstead_effort_avg[], 0.75, na.rm = TRUE))
+lowerbound_halstead_effort_avg = q1_halstead_effort_avg - 1.5*(q3_halstead_effort_avg - q1_halstead_effort_avg)
+upperbound_halstead_effort_avg = q1_halstead_effort_avg + 1.5*(q3_halstead_effort_avg - q1_halstead_effort_avg)
+
+
+q1_halstead_difficulty_avg = unname(quantile(dataframe_rq4$halstead_difficulty_avg[], 0.25, na.rm = TRUE))
+q3_halstead_difficulty_avg = unname(quantile(dataframe_rq4$halstead_difficulty_avg[], 0.75, na.rm = TRUE))
+lowerbound_halstead_difficulty_avg = q1_halstead_difficulty_avg - 1.5*(q3_halstead_difficulty_avg - q1_halstead_difficulty_avg)
+upperbound_halstead_difficulty_avg = q1_halstead_difficulty_avg + 1.5*(q3_halstead_difficulty_avg - q1_halstead_difficulty_avg)
+
+
+q1_mi_average = unname(quantile(dataframe_rq4$mi_average[], 0.25, na.rm = TRUE))
+q3_mi_average = unname(quantile(dataframe_rq4$mi_average[], 0.75, na.rm = TRUE))
+lowerbound_mi_average = q1_mi_average - 1.5*(q3_mi_average - q1_mi_average)
+upperbound_mi_average = q1_mi_average + 1.5*(q3_mi_average - q1_mi_average)
+
+q1_cognitive_avg = unname(quantile(dataframe_rq4$cognitive_avg[], 0.25, na.rm = TRUE))
+q3_cognitive_avg = unname(quantile(dataframe_rq4$cognitive_avg[], 0.75, na.rm = TRUE))
+lowerbound_cognitive_avg = q1_cognitive_avg - 1.5*(q3_cognitive_avg - q1_cognitive_avg)
+upperbound_cognitive_avg = q1_cognitive_avg + 1.5*(q3_cognitive_avg - q1_cognitive_avg)
+
+
+ggplot(dataframe_rq4 %>% filter(wmc_avg >= lowerbound_wmc_avg & wmc_avg <= upperbound_wmc_avg), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = wmc_avg, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) +  coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Avg. WMC") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") 
+
+
+ggplot(dataframe_rq4 %>% filter(cyclomatic_avg >= lowerbound_cyclomatic_avg & cyclomatic_avg <= upperbound_cyclomatic_avg), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = cyclomatic_avg, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) +  coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Avg. CC") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") + theme(        axis.text.y=element_blank()        )
+
+
+ggplot(dataframe_rq4 %>% filter(halstead_effort_avg >= lowerbound_halstead_effort_avg & halstead_effort_avg <= upperbound_halstead_effort_avg), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = halstead_effort_avg, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) +  coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Avg. Halstead Effort (log10)") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") + theme(        axis.text.y=element_blank()        )
+
+
+ggplot(dataframe_rq4 %>% filter(halstead_difficulty_avg >= lowerbound_halstead_difficulty_avg & halstead_difficulty_avg <= upperbound_halstead_difficulty_avg), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = halstead_difficulty_avg, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) +  coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Avg. Halstead Difficulty") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") 
+
+
+ggplot(dataframe_rq4 %>% filter(mi_average >= lowerbound_mi_average & mi_average <= upperbound_mi_average), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = mi_average, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) +  coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Avg. MI") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") + theme(        axis.text.y=element_blank()        )
+
+
+ggplot(dataframe_rq4 %>% filter(cognitive_avg >= lowerbound_cognitive_avg & cognitive_avg <= upperbound_cognitive_avg), aes(x = factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin")), y = cognitive_avg, fill =factor(kotlin_group, levels = c("No Kotlin", "Kotlin Minority", "Kotlin Majority", "Only Kotlin"), ordered = TRUE))) +
+  geom_violin(trim = FALSE) +  coord_flip() +
+  geom_boxplot(width = 0.1, fill = "white", color = "black") +
+  labs(x = "", y = "Avg. Cognitive Complexity") +
+  theme_minimal() + scale_fill_manual(values = my_colors)  +  theme(legend.position="none") + theme(        axis.text.y=element_blank()        )
+
+
+
+```
+
+```{r RQ4stat, fig.height=4, fig.width=4}
+
+
+
+wmc_avg_res <- dataframe_rq4 %>% filter(wmc_avg >= lowerbound_wmc_avg & wmc_avg <= upperbound_wmc_avg) %>% group_by(kotlin_group) %>% summarize(
+    median_wmc_avg = median(wmc_avg, na.rm = TRUE),
+  average_wmc_avg = mean(wmc_avg, na.rm = TRUE),
+  sd_wmc_avg = sd(wmc_avg, na.rm = TRUE)
+)
+
+head(wmc_avg_res)
+
+cyclomatic_avg_res <- dataframe_rq4 %>% filter(cyclomatic_avg >= lowerbound_cyclomatic_avg & cyclomatic_avg <= upperbound_cyclomatic_avg) %>% group_by(kotlin_group) %>% summarize(
+    median_cyclomatic_avg = median(cyclomatic_avg, na.rm = TRUE),
+  average_cyclomatic_avg = mean(cyclomatic_avg, na.rm = TRUE),
+  sd_cyclomatic_avg = sd(cyclomatic_avg, na.rm = TRUE)
+)
+
+head(cyclomatic_avg_res)
+
+halstead_effort_avg_res <- dataframe_rq4 %>% filter(halstead_effort_avg >= lowerbound_halstead_effort_avg & halstead_effort_avg <= upperbound_halstead_effort_avg) %>% group_by(kotlin_group) %>% summarize(
+    median_halstead_effort_avg = median(halstead_effort_avg, na.rm = TRUE),
+  average_halstead_effort_avg = mean(halstead_effort_avg, na.rm = TRUE),
+  sd_halstead_effort_avg = sd(halstead_effort_avg, na.rm = TRUE)
+)
+
+head(halstead_effort_avg_res)
+
+halstead_difficulty_avg_res <- dataframe_rq4 %>% filter(halstead_difficulty_avg >= lowerbound_halstead_difficulty_avg & halstead_difficulty_avg <= upperbound_halstead_difficulty_avg) %>% group_by(kotlin_group) %>% summarize(
+    median_halstead_difficulty_avg = median(halstead_difficulty_avg, na.rm = TRUE),
+  average_halstead_difficulty_avg = mean(halstead_difficulty_avg, na.rm = TRUE),
+  sd_halstead_difficulty_avg = sd(halstead_difficulty_avg, na.rm = TRUE)
+)
+
+head(halstead_difficulty_avg_res)
+
+mi_average_res <- dataframe_rq4 %>% filter(mi_average >= lowerbound_mi_average & mi_average <= upperbound_mi_average) %>% group_by(kotlin_group) %>% summarize(
+    median_mi_average = median(mi_average, na.rm = TRUE),
+  average_mi_average = mean(mi_average, na.rm = TRUE),
+  sd_mi_average = sd(mi_average, na.rm = TRUE)
+)
+
+head(mi_average_res)
+
+cognitive_avg_res <- dataframe_rq4 %>% filter(cognitive_avg >= lowerbound_cognitive_avg & cognitive_avg <= upperbound_cognitive_avg) %>% group_by(kotlin_group) %>% summarize(
+    median_cognitive_avg = median(cognitive_avg, na.rm = TRUE),
+  average_cognitive_avg = mean(cognitive_avg, na.rm = TRUE),
+  sd_cognitive_avg = sd(cognitive_avg, na.rm = TRUE)
+)
+
+head(cognitive_avg_res)
+
+
+
+contr = list( kotlin_group="contr.treatment" ) 
+
+print("wmc stat analysis")
+model = lm( wmc_avg ~ kotlin_group , data=dataframe_rq4 %>% filter(wmc_avg >= lowerbound_wmc_avg & wmc_avg <= upperbound_wmc_avg), contrasts = contr )  
+summary( model ) %>% coefficients
+
+print("cyclomatic stat analysis")
+model = lm( cyclomatic_avg ~ kotlin_group , data=dataframe_rq4 %>% filter(cyclomatic_avg >= lowerbound_cyclomatic_avg & cyclomatic_avg <= upperbound_cyclomatic_avg), contrasts = contr )  
+summary( model ) %>% coefficients
+
+print("halstead effort stat analysis")
+model = lm( halstead_effort_avg ~ kotlin_group , data=dataframe_rq4 %>% filter(halstead_effort_avg >= lowerbound_halstead_effort_avg & halstead_effort_avg <= upperbound_halstead_effort_avg), contrasts = contr )  
+summary( model ) %>% coefficients
+
+print("halstead difficulty stat analysis")
+model = lm( halstead_difficulty_avg ~ kotlin_group , data=dataframe_rq4 %>% filter(halstead_difficulty_avg >= lowerbound_halstead_difficulty_avg & halstead_difficulty_avg <= upperbound_halstead_difficulty_avg), contrasts = contr )  
+summary( model ) %>% coefficients
+
+print("mi stat analysis")
+model = lm( mi_average ~ kotlin_group , data=dataframe_rq4 %>% filter(mi_average >= lowerbound_mi_average & mi_average <= upperbound_mi_average), contrasts = contr )  
+summary( model ) %>% coefficients
+
+print("cognitive stat analysis")
+model = lm( cognitive_avg ~ kotlin_group , data=dataframe_rq4 %>% filter(cognitive_avg >= lowerbound_cognitive_avg & cognitive_avg <= upperbound_cognitive_avg), contrasts = contr )  
+summary( model ) %>% coefficients
+
+
+```
